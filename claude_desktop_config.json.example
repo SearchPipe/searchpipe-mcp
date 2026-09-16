@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "searchpipe": {
+      "url": "https://searchpipe.tech/mcp/?api_key=sp-your-api-key-here"
+    }
+  }
+}
