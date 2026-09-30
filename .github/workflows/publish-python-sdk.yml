@@ -1,0 +1,38 @@
+name: Publish Python SDK to PyPI
+
+# 触发：推送 py-sdk-v* tag（正式发布）或手动 workflow_dispatch（首验 trusted publishing 绑定）。
+# 依赖 PyPI 侧的 Trusted Publisher 一次性绑定，见 sdks/PUBLISHING.md。
+on:
+  push:
+    tags:
+      - "py-sdk-v*"
+  workflow_dispatch:
+
+permissions:
+  # Trusted publishing (OIDC) 必需：不需要任何 PYPI_API_TOKEN。
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build
+        run: python -m pip install --upgrade build
+
+      - name: Build sdist and wheel
+        working-directory: sdks/python
+        run: python -m build --sdist --wheel --outdir dist/ .
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # 该 action 不受 working-directory 影响，需从仓库根指定 dist 目录
+          packages-dir: sdks/python/dist

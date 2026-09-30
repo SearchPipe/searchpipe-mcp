@@ -1,0 +1,46 @@
+name: Publish TypeScript SDK to npm
+
+# 触发：推送 js-sdk-v* tag（正式发布）或手动 workflow_dispatch（首验 trusted publishing 绑定）。
+# 依赖 npm 侧的 Trusted Publishing / provenance 一次性绑定，见 sdks/PUBLISHING.md。
+on:
+  push:
+    tags:
+      - "js-sdk-v*"
+  workflow_dispatch:
+
+permissions:
+  # Trusted publishing (OIDC) 必需：不需要任何 NPM_TOKEN。
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+
+      # npm publish --provenance 需要 npm >= 11.5
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build ESM + CJS
+        run: npm run build
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public

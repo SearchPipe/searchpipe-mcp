@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "searchpipe"
+version = "0.1.0"
+description = "Official Python SDK for the SearchPipe web search API."
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = ["httpx>=0.27"]
+
+[project.urls]
+Repository = "https://github.com/SearchPipe/searchpipe-mcp"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/searchpipe"]
+
+# 独立于服务端根 pyproject 的 pytest 配置：保证在 sdks/python 下运行 pytest 时
+# rootdir/配置落在本目录，不继承服务端 asyncio/testpaths 设置（SDK venv 无那些插件）。
+[tool.pytest.ini_options]
+testpaths = ["tests"]

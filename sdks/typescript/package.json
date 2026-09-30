@@ -1,0 +1,35 @@
+{
+  "name": "searchpipe",
+  "version": "0.1.0",
+  "description": "Official JavaScript/TypeScript SDK for the SearchPipe web search API.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SearchPipe/searchpipe-mcp.git"
+  },
+  "main": "./dist/cjs/index.cjs",
+  "types": "./dist/esm/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/esm/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node scripts/fixup-cjs.mjs",
+    "test": "tsx --test tests/client.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

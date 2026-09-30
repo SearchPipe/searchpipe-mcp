@@ -55,3 +55,6 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# --- Node (sdks/typescript) ---
+node_modules/
