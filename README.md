@@ -1,24 +1,20 @@
-# SearchPipe MCP Server
+# SearchPipe Integrations
 
 [![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-blue)](https://modelcontextprotocol.io/)
 [![SearchPipe](https://img.shields.io/badge/Powered%20by-SearchPipe-green)](https://searchpipe.tech)
 
-MCP server for [SearchPipe](https://searchpipe.tech) — an AI-powered web search API (Tavily-style) that aggregates SearXNG multi-engine retrieval, trafilatura content extraction, and LLM reranking/summarization into a single `web_search` tool.
+Official integration packages for [SearchPipe](https://searchpipe.tech) — a web search API and MCP server for developers building AI agents.
 
-## Features
+This repository contains:
 
-- **One tool, full pipeline**: `searchpipe_search` runs SearXNG retrieval → page fetching → LLM reranking → optional AI answer
-- **Tavily-style structured output**: query, answer, results[] with title/url/content/score
-- **Credit-based billing**: per-call credit deduction with automatic refund on failure
-- **Content moderation**: input/output safety checks (Alibaba Cloud Content Safety)
-- **Rate limiting**: per-API-key sliding window
-- **Usage logging**: per-call analytics with latency and credit consumption
+- **Remote MCP endpoint** — connect any MCP client to SearchPipe via Streamable HTTP (no local install needed)
+- **[LangChain SDK](langchain-searchpipe/)** — `pip install langchain-searchpipe` for retriever, tool, and answer components
 
-## Quick Start
+> The SearchPipe server itself is a managed service at [searchpipe.tech](https://searchpipe.tech). Self-hosting is available on request.
 
-### Remote (Streamable HTTP)
+## MCP Access (Remote)
 
-Add to your MCP client config (Claude Desktop, Cursor, etc.):
+Add to your MCP client config (Claude Desktop, Cursor, Windsurf, etc.):
 
 ```json
 {
@@ -45,19 +41,15 @@ Or use an Authorization header instead of URL parameter:
 }
 ```
 
-### Local (stdio)
+See [`claude_desktop_config.json.example`](claude_desktop_config.json.example) for a ready-to-copy template.
+
+## LangChain Integration
 
 ```bash
-pip install searchpipe-mcp
-export SEARCHPIPE_API_KEY=sp-your-api-key-here
-searchpipe-mcp
+pip install langchain-searchpipe
 ```
 
-Or with `uvx`:
-
-```bash
-uvx searchpipe-mcp
-```
+See [langchain-searchpipe/README.md](langchain-searchpipe/README.md) for full usage examples (retriever, tool, answer components).
 
 ## Getting an API Key
 
@@ -70,7 +62,7 @@ uvx searchpipe-mcp
 
 ### `searchpipe_search`
 
-Run an AI-powered web search.
+Run a web search with optional AI-generated answer.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
@@ -82,16 +74,11 @@ Run an AI-powered web search.
 
 **Returns**: Tavily-style `SearchResponse` with `query`, `answer`, `results[]`.
 
-## Self-Hosting
-
-SearchPipe is open-source and self-hostable. The full server (FastAPI + SearXNG + PostgreSQL + Redis) is available at [github.com/engineer566/searchpipe](https://github.com/engineer566/searchpipe).
-
 ## Links
 
 - **Website**: [searchpipe.tech](https://searchpipe.tech)
 - **API Docs**: [searchpipe.tech/docs](https://searchpipe.tech/docs)
 - **MCP Endpoint**: `https://searchpipe.tech/mcp/`
-- **Full Server Source**: [github.com/engineer566/searchpipe](https://github.com/engineer566/searchpipe)
 
 ## License
 

@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![SearchPipe](https://img.shields.io/badge/Powered%20by-SearchPipe-green)](https://searchpipe.tech)
 
-LangChain integration for [SearchPipe](https://searchpipe.tech) — an AI-powered web search API (Tavily-style) that aggregates SearXNG multi-engine retrieval, trafilatura content extraction, and LLM reranking/summarization into a single `/search` endpoint.
+LangChain integration for [SearchPipe](https://searchpipe.tech) — a web search API and MCP server for developers building AI agents. Provides retriever, tool, and answer components that wrap the `/search` endpoint with Tavily-style structured output.
 
 ## Installation
 
@@ -64,15 +64,13 @@ for r in result["results"]:
     print("-", r["title"], r["url"])
 ```
 
-### Self-Hosting
+### Self-Hosting / Custom Instance
 
-SearchPipe is open-source and self-hostable. To point the integration at your own instance:
+To point the integration at your own SearchPipe instance:
 
 ```python
 retriever = SearchPipeRetriever(base_url="https://your-searchpipe.example.com")
 ```
-
-Full server source: [github.com/engineer566/searchpipe](https://github.com/engineer566/searchpipe).
 
 ## Features
 
@@ -89,7 +87,6 @@ Full server source: [github.com/engineer566/searchpipe](https://github.com/engin
 - **Website**: [searchpipe.tech](https://searchpipe.tech)
 - **API Docs**: [searchpipe.tech/docs](https://searchpipe.tech/docs)
 - **MCP Endpoint**: `https://searchpipe.tech/mcp/`
-- **Full Server Source**: [github.com/engineer566/searchpipe](https://github.com/engineer566/searchpipe)
 
 ## License
 
