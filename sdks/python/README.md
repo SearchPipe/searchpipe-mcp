@@ -1,6 +1,6 @@
 # SearchPipe Python SDK
 
-Official Python SDK for the SearchPipe web search API.
+Official Python SDK for the SearchPipe web search API — verifiable evidence with every result.
 
 SearchPipe is a web search API and MCP server for developers building AI agents. This SDK is a thin httpx-based client covering the full `POST /search` parameter set — ranked results, optional LLM answers with citations, and optional raw page content — in both synchronous and asynchronous flavors.
 
@@ -55,6 +55,34 @@ asyncio.run(main())
 ```
 
 Both clients support `close()` and context managers (`with` / `async with`).
+
+### Verify a claim
+
+```python
+result = client.verify(
+    "The transformer paper introduced self-attention in 2017",
+    mode="auto",        # "paper" / "web" / "auto" (DOI or arXiv signal decides)
+    max_evidence=5,     # 1-10
+)
+
+print(result.verdict)       # supported / partial / unsupported / inconclusive
+print(result.confidence, result.reason_code)
+for evidence in result.evidences:
+    print(evidence.source_tier, evidence.url)
+    print(evidence.quote)   # span-level quote from the source text
+```
+
+`verify()` returns a `VerifyResponse` dataclass:
+
+| Field | Type | Description |
+|---|---|---|
+| `verdict` | `str` | `supported` / `partial` / `unsupported` / `inconclusive` |
+| `confidence` | `float` | 0-1 |
+| `reason_code` | `str` | Machine-readable template phrase (e.g. `quote_span_found`, `paywall`) |
+| `evidences` | `list[VerifyEvidence]` | `url`, `title`, `source_tier`, `quote`, `span_start`/`span_end`, `per_evidence_verdict`, `confidence`, `url_health` |
+| `timing` | `dict[str, float]` | Per-stage wall time in seconds |
+
+`inconclusive` is a first-class outcome (fetch failure, paywall, or insufficient evidence) — the API reports that instead of guessing. Verification fetches source pages, so expect **5–15 seconds** per call. Credits are charged per request; `inconclusive` is a delivered result and is not refunded, while failed calls are refunded automatically.
 
 ## Responses
 

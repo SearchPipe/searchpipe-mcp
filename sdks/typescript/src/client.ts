@@ -2,16 +2,21 @@
  * Thin fetch-based client for the SearchPipe web search API.
  *
  * Zero runtime dependencies: uses the platform `fetch` (Node >= 18, browsers
- * and edge runtimes). Non-2xx responses are mapped onto the typed error
- * hierarchy in {@link ./errors.ts}.
+ * and edge runtimes). Covers `POST /search` (ranked results) and `POST /verify`
+ * (four-label claim verdicts with span-level evidence). Non-2xx responses are
+ * mapped onto the typed error hierarchy in {@link ./errors.ts}.
  */
 
 import { APIConnectionError, SearchPipeError, errorFromResponse } from "./errors.js";
 import {
   parseSearchResponse,
+  parseVerifyResponse,
   type SearchParams,
   type SearchRequest,
   type SearchResponse,
+  type VerifyParams,
+  type VerifyRequest,
+  type VerifyResponse,
 } from "./types.js";
 
 export const DEFAULT_BASE_URL = "https://searchpipe.tech";
@@ -113,6 +118,39 @@ export class SearchPipe {
       include_raw_content: params.includeRawContent ?? false,
     };
 
+    const response = await this.post(`${this._baseUrl}/search`, body, params.timeoutMs);
+    return this.processResponse(response, parseSearchResponse);
+  }
+
+  /**
+   * Verify a factual claim via `POST /verify` (claim in, verdict out).
+   *
+   * Returns a four-label verdict (`supported` / `partial` / `unsupported` /
+   * `inconclusive` — an inconclusive verdict is a delivered result and is not
+   * refunded) with span-level evidence quotes. Verification fetches source
+   * pages and judges claim-evidence consistency, so it typically takes 5-15
+   * seconds; raise `timeoutMs` above the default accordingly.
+   *
+   * @returns A typed {@link VerifyResponse} (snake_case fields, as served by
+   *   the REST API and consumed by the Python SDK).
+   * @throws {SearchPipeError} Typed subclasses per the error contract — see
+   *   {@link ./errors.ts}.
+   */
+  async verify(params: VerifyParams): Promise<VerifyResponse> {
+    // Mirror the server's snake_case schema; omitted optionals fall through to
+    // the server defaults (JSON.stringify drops undefined properties).
+    const body: VerifyRequest = {
+      claim: params.claim,
+      mode: params.mode ?? "auto",
+      evidence_urls: params.evidenceUrls,
+      max_evidence: params.maxEvidence,
+    };
+
+    const response = await this.post(`${this._baseUrl}/verify`, body, params.timeoutMs);
+    return this.processResponse(response, parseVerifyResponse);
+  }
+
+  private async post(url: string, body: unknown, timeoutMs: number | undefined): Promise<Response> {
     const init: RequestInit = {
       method: "POST",
       headers: {
@@ -120,21 +158,22 @@ export class SearchPipe {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(params.timeoutMs ?? this.timeoutMs),
+      signal: AbortSignal.timeout(timeoutMs ?? this.timeoutMs),
     };
 
-    let response: Response;
     try {
-      response = await this.fetchImpl(`${this._baseUrl}/search`, init);
+      return await this.fetchImpl(url, init);
     } catch (error) {
       throw new APIConnectionError(
         `Could not connect to SearchPipe at ${this._baseUrl}: ${errorMessage(error)}`
       );
     }
-    return this.processResponse(response);
   }
 
-  private async processResponse(response: Response): Promise<SearchResponse> {
+  private async processResponse<T>(
+    response: Response,
+    parse: (data: unknown) => T
+  ): Promise<T> {
     const text = await safeText(response);
     if (!response.ok) {
       throw errorFromResponse(response.status, response.headers, text);
@@ -147,7 +186,7 @@ export class SearchPipe {
         `SearchPipe returned a non-JSON success response (HTTP ${response.status}).`
       );
     }
-    return parseSearchResponse(data);
+    return parse(data);
   }
 
   /**

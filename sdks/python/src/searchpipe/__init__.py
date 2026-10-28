@@ -15,9 +15,18 @@ from .exceptions import (
     SearchPipeServerError,
     ValidationError,
 )
-from .models import SearchResponse, SearchResult
+from .models import (
+    AnswerAudit,
+    ResultEvidence,
+    SearchResponse,
+    SearchResult,
+    StatementAudit,
+    StatementCitation,
+    VerifyEvidence,
+    VerifyResponse,
+)
 
-__version__ = "0.1.0"
+__version__ = "2.0.0"
 
 __all__ = [
     "SearchPipe",
@@ -26,6 +35,12 @@ __all__ = [
     # models
     "SearchResponse",
     "SearchResult",
+    "VerifyResponse",
+    "VerifyEvidence",
+    "AnswerAudit",
+    "StatementAudit",
+    "StatementCitation",
+    "ResultEvidence",
     # exceptions
     "SearchPipeError",
     "APIConnectionError",

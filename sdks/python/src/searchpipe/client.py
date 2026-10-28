@@ -1,8 +1,9 @@
 """Thin HTTP clients for the SearchPipe web search API.
 
 ``SearchPipe`` (sync, httpx.Client) and ``AsyncSearchPipe`` (httpx.AsyncClient)
-cover the full ``POST /search`` parameter set and map non-2xx responses onto
-the typed exception hierarchy in :mod:`searchpipe.exceptions`.
+cover the full ``POST /search`` and ``POST /verify`` parameter sets and map
+non-2xx responses onto the typed exception hierarchy in
+:mod:`searchpipe.exceptions`.
 
 The ``transport=`` constructor parameter exists **for tests only** (httpx
 ``MockTransport`` injection); never use it in application code.
@@ -30,7 +31,7 @@ from .exceptions import (
     ValidationError,
     _parse_number,
 )
-from .models import SearchResponse
+from .models import SearchResponse, VerifyResponse
 
 __all__ = ["SearchPipe", "AsyncSearchPipe", "DEFAULT_BASE_URL"]
 
@@ -60,6 +61,25 @@ def _search_payload(
         "include_answer": include_answer,
         "include_raw_content": include_raw_content,
     }
+
+
+def _verify_payload(
+    claim: str,
+    *,
+    mode: str,
+    evidence_urls: list[str] | None,
+    max_evidence: int | None,
+) -> dict[str, Any]:
+    """Build the JSON request body for ``POST /verify`` (snake_case schema).
+
+    ``None`` optionals are omitted so the server applies its own defaults.
+    """
+    body: dict[str, Any] = {"claim": claim, "mode": mode}
+    if evidence_urls is not None:
+        body["evidence_urls"] = evidence_urls
+    if max_evidence is not None:
+        body["max_evidence"] = max_evidence
+    return body
 
 
 def _error_detail(response: httpx.Response) -> tuple[Any, str | None]:
@@ -133,6 +153,22 @@ def _error_from_response(response: httpx.Response) -> APIStatusError:
     if status_code >= 500:
         return SearchPipeServerError(message, **kwargs)
     return APIStatusError(message, **kwargs)
+
+
+def _success_json(response: httpx.Response) -> dict[str, Any]:
+    """Decode a 2xx response body into a JSON object or raise a typed error."""
+    if not response.is_success:
+        raise _error_from_response(response)
+    try:
+        data: Any = response.json()
+    except ValueError as exc:
+        raise SearchPipeError(
+            f"SearchPipe returned a non-JSON success response "
+            f"(HTTP {response.status_code})."
+        ) from exc
+    if not isinstance(data, dict):
+        raise SearchPipeError("SearchPipe returned an unexpected response format.")
+    return data
 
 
 class _BaseClient:
@@ -229,30 +265,64 @@ class SearchPipe(_BaseClient):
             include_answer=include_answer,
             include_raw_content=include_raw_content,
         )
+        return self._process(self._post("/search", payload, timeout=timeout), SearchResponse.from_dict)
+
+    def verify(
+        self,
+        claim: str,
+        *,
+        mode: str = "auto",
+        evidence_urls: list[str] | None = None,
+        max_evidence: int | None = None,
+        timeout: float | None = None,
+    ) -> VerifyResponse:
+        """Verify a factual claim via ``POST /verify`` (claim in, verdict out).
+
+        Args:
+            claim: The claim (statement or query) to verify.
+            mode: Evidence route — ``"paper"``, ``"web"``, or ``"auto"``
+                (default; a DOI or arXiv signal decides).
+            evidence_urls: Up to 5 caller-supplied citations to verify.
+            max_evidence: Maximum evidence items to return (1-10).
+            timeout: Per-request timeout override; ``None`` uses the client
+                default. Verification fetches source pages, so expect the call
+                to take 5-15 seconds.
+
+        Returns:
+            A typed :class:`~searchpipe.models.VerifyResponse` — a four-label
+            verdict (``supported`` / ``partial`` / ``unsupported`` /
+            ``inconclusive``) with span-level evidence quotes. An
+            ``inconclusive`` verdict is a delivered result and is not refunded.
+
+        Raises:
+            SearchPipeError: Subclasses per the error contract — see
+                :mod:`searchpipe.exceptions`.
+        """
+        payload = _verify_payload(
+            claim,
+            mode=mode,
+            evidence_urls=evidence_urls,
+            max_evidence=max_evidence,
+        )
+        return self._process(self._post("/verify", payload, timeout=timeout), VerifyResponse.from_dict)
+
+    def _post(
+        self, path: str, payload: dict[str, Any], *, timeout: float | None
+    ) -> httpx.Response:
+        """POST JSON, mapping network failures onto :class:`APIConnectionError`."""
         options: dict[str, Any] = {}
         if timeout is not None:
             options["timeout"] = timeout
         try:
-            response = self._client.post("/search", json=payload, **options)
+            return self._client.post(path, json=payload, **options)
         except httpx.RequestError as exc:
             raise APIConnectionError(
                 f"Could not connect to SearchPipe at {self._base_url}: {exc}"
             ) from exc
-        return self._process(response)
 
-    def _process(self, response: httpx.Response) -> SearchResponse:
-        if not response.is_success:
-            raise _error_from_response(response)
-        try:
-            data: Any = response.json()
-        except ValueError as exc:
-            raise SearchPipeError(
-                f"SearchPipe returned a non-JSON success response "
-                f"(HTTP {response.status_code})."
-            ) from exc
-        if not isinstance(data, dict):
-            raise SearchPipeError("SearchPipe returned an unexpected response format.")
-        return SearchResponse.from_dict(data)
+    def _process(self, response: httpx.Response, parse: Any) -> Any:
+        """Map a response onto a typed model (errors per the error contract)."""
+        return parse(_success_json(response))
 
     def close(self) -> None:
         """Release the underlying HTTP connection pool."""
@@ -268,8 +338,8 @@ class SearchPipe(_BaseClient):
 class AsyncSearchPipe(_BaseClient):
     """Asynchronous client for the SearchPipe web search API.
 
-    Mirrors :class:`SearchPipe` with an ``httpx.AsyncClient``; ``search`` is
-    awaited. The ``transport=`` parameter is **for tests only**.
+    Mirrors :class:`SearchPipe` with an ``httpx.AsyncClient``; ``search`` and
+    ``verify`` are awaited. The ``transport=`` parameter is **for tests only**.
     """
 
     def __init__(
@@ -313,30 +383,45 @@ class AsyncSearchPipe(_BaseClient):
             include_answer=include_answer,
             include_raw_content=include_raw_content,
         )
+        response = await self._post("/search", payload, timeout=timeout)
+        return self._process(response, SearchResponse.from_dict)
+
+    async def verify(
+        self,
+        claim: str,
+        *,
+        mode: str = "auto",
+        evidence_urls: list[str] | None = None,
+        max_evidence: int | None = None,
+        timeout: float | None = None,
+    ) -> VerifyResponse:
+        """Verify a factual claim via ``POST /verify`` (awaited). See :meth:`SearchPipe.verify`."""
+        payload = _verify_payload(
+            claim,
+            mode=mode,
+            evidence_urls=evidence_urls,
+            max_evidence=max_evidence,
+        )
+        response = await self._post("/verify", payload, timeout=timeout)
+        return self._process(response, VerifyResponse.from_dict)
+
+    async def _post(
+        self, path: str, payload: dict[str, Any], *, timeout: float | None
+    ) -> httpx.Response:
+        """POST JSON, mapping network failures onto :class:`APIConnectionError`."""
         options: dict[str, Any] = {}
         if timeout is not None:
             options["timeout"] = timeout
         try:
-            response = await self._client.post("/search", json=payload, **options)
+            return await self._client.post(path, json=payload, **options)
         except httpx.RequestError as exc:
             raise APIConnectionError(
                 f"Could not connect to SearchPipe at {self._base_url}: {exc}"
             ) from exc
-        return self._process(response)
 
-    def _process(self, response: httpx.Response) -> SearchResponse:
-        if not response.is_success:
-            raise _error_from_response(response)
-        try:
-            data: Any = response.json()
-        except ValueError as exc:
-            raise SearchPipeError(
-                f"SearchPipe returned a non-JSON success response "
-                f"(HTTP {response.status_code})."
-            ) from exc
-        if not isinstance(data, dict):
-            raise SearchPipeError("SearchPipe returned an unexpected response format.")
-        return SearchResponse.from_dict(data)
+    def _process(self, response: httpx.Response, parse: Any) -> Any:
+        """Map a response onto a typed model (errors per the error contract)."""
+        return parse(_success_json(response))
 
     async def close(self) -> None:
         """Release the underlying HTTP connection pool."""

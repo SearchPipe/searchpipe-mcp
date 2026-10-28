@@ -1,7 +1,7 @@
 {
   "name": "searchpipe",
-  "version": "0.1.0",
-  "description": "Official JavaScript/TypeScript SDK for the SearchPipe web search API.",
+  "version": "2.0.0",
+  "description": "Official JavaScript/TypeScript SDK for the SearchPipe web search API — verifiable evidence with every result.",
   "license": "MIT",
   "type": "module",
   "repository": {

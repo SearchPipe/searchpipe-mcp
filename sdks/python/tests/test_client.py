@@ -23,6 +23,8 @@ from searchpipe import (
     SearchResponse,
     SearchResult,
     ValidationError,
+    VerifyEvidence,
+    VerifyResponse,
     __version__,
 )
 
@@ -82,7 +84,7 @@ def error_response(
 
 
 def test_version_and_public_names():
-    assert __version__ == "0.1.0"
+    assert __version__ == "2.0.0"
     import searchpipe
 
     for name in searchpipe.__all__:
@@ -138,6 +140,69 @@ def test_search_response_tolerates_missing_fields():
     assert resp.results[0].score == 0.0
     assert resp.results[0].content == ""
     assert resp.results[0].raw_content is None
+    assert resp.results[0].evidence is None
+    assert resp.answer_audit is None
+
+
+def test_search_evidence_and_answer_audit_map_typed_fields():
+    body = success_body(
+        answer_audit={
+            "score": 0.75,
+            "uncited_count": 1,
+            "prompt_version": "answer-audit-v1-20261015",
+            "statements": [
+                {
+                    "text": "The sky is blue.",
+                    "verdict": "supported",
+                    "confidence": 0.97,
+                    "citations": [
+                        {
+                            "url": "https://example.com/a",
+                            "title": "A",
+                            "quote": "sky quote",
+                            "span_start": 3,
+                            "span_end": 12,
+                        }
+                    ],
+                },
+                {"text": "Uncited claim.", "verdict": "uncited", "confidence": 0.0},
+            ],
+        }
+    )
+    body["results"][0]["evidence"] = {
+        "quote": "full text a",
+        "span_start": 0,
+        "span_end": 11,
+        "source_tier": "official",
+        "fetch_status": 200,
+        "redirected": True,
+        "final_url": "https://example.com/a-final",
+        "fetched_at": "2026-10-19T00:00:00Z",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    resp = make_client(handler).search("q", include_answer=True, search_depth="advanced")
+    audit = resp.answer_audit
+    assert audit is not None
+    assert audit.score == 0.75
+    assert audit.uncited_count == 1
+    assert audit.prompt_version == "answer-audit-v1-20261015"
+    first = audit.statements[0]
+    assert first.verdict == "supported"
+    assert first.citations[0].url == "https://example.com/a"
+    assert first.citations[0].span_end == 12
+    assert audit.statements[1].verdict == "uncited"
+
+    evidence = resp.results[0].evidence
+    assert evidence is not None
+    assert evidence.quote == "full text a"
+    assert evidence.source_tier == "official"
+    assert evidence.fetch_status == 200
+    assert evidence.redirected is True
+    assert evidence.final_url == "https://example.com/a-final"
+    assert resp.results[1].evidence is None
 
 
 # --- error contract mapping ----------------------------------------------------
@@ -296,6 +361,181 @@ def test_connection_error_maps_to_api_connection_error():
         make_client(handler).search("q")
     assert not isinstance(excinfo.value, APIStatusError)
     assert "connection refused" in str(excinfo.value)
+
+
+# --- verify (POST /verify) -----------------------------------------------------
+
+
+def verify_body(**overrides: Any) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "verdict": "supported",
+        "confidence": 0.92,
+        "reason_code": "quote_span_found",
+        "evidences": [
+            {
+                "url": "https://example.com/paper",
+                "title": "Stub Paper",
+                "source_tier": "academic",
+                "quote": "supporting sentence",
+                "span_start": 0,
+                "span_end": 19,
+                "per_evidence_verdict": "supported",
+                "confidence": 0.9,
+                "url_health": {
+                    "status_code": 200,
+                    "redirected": False,
+                    "wayback_snapshot": None,
+                    "fetched_at": None,
+                },
+            }
+        ],
+        "timing": {"v_prepare": 0.01, "v_evidence": 0.4, "v_judge": 0.5},
+    }
+    body.update(overrides)
+    return body
+
+
+def test_verify_success_maps_typed_response():
+    captured: list[httpx.Request] = []
+
+    def wrapped(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=verify_body())
+
+    resp = make_client(wrapped, captured=captured).verify(
+        "the transformer paper introduced self-attention"
+    )
+    assert isinstance(resp, VerifyResponse)
+    assert resp.verdict == "supported"
+    assert resp.confidence == 0.92
+    assert resp.reason_code == "quote_span_found"
+    assert resp.timing == {"v_prepare": 0.01, "v_evidence": 0.4, "v_judge": 0.5}
+    first = resp.evidences[0]
+    assert isinstance(first, VerifyEvidence)
+    assert first.url == "https://example.com/paper"
+    assert first.source_tier == "academic"
+    assert first.quote == "supporting sentence"
+    assert first.span_start == 0 and first.span_end == 19
+    assert first.per_evidence_verdict == "supported"
+    assert first.confidence == 0.9
+    assert first.url_health is not None
+    assert first.url_health["status_code"] == 200
+
+    # Request mapping: POST {base}/verify, claim required, snake_case body.
+    import json as _json
+
+    request = captured[0]
+    assert request.method == "POST"
+    assert str(request.url).endswith("/verify")
+    payload = _json.loads(request.read().decode("utf-8"))
+    assert payload == {
+        "claim": "the transformer paper introduced self-attention",
+        "mode": "auto",
+    }
+
+
+def test_verify_request_body_maps_optional_params():
+    captured: list[httpx.Request] = []
+
+    def wrapped(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=verify_body(verdict="inconclusive"))
+
+    resp = make_client(wrapped, captured=captured).verify(
+        "claim",
+        mode="paper",
+        evidence_urls=["https://example.com/a", "https://example.com/b"],
+        max_evidence=3,
+    )
+    assert resp.verdict == "inconclusive"
+    import json as _json
+
+    payload = _json.loads(captured[0].read().decode("utf-8"))
+    assert payload == {
+        "claim": "claim",
+        "mode": "paper",
+        "evidence_urls": ["https://example.com/a", "https://example.com/b"],
+        "max_evidence": 3,
+    }
+
+
+def test_verify_response_tolerates_missing_fields():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"verdict": "inconclusive"})
+
+    resp = make_client(handler).verify("q")
+    assert resp.verdict == "inconclusive"
+    assert resp.confidence == 0.0
+    assert resp.reason_code == ""
+    assert resp.evidences == []
+    assert resp.timing == {}
+
+
+def test_verify_error_401_maps_to_authentication_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return error_response(401, json_body={"detail": "Invalid API key"})
+
+    with pytest.raises(AuthenticationError) as excinfo:
+        make_client(handler).verify("q")
+    assert excinfo.value.status_code == 401
+
+
+def test_verify_error_402_parses_balance_and_required():
+    detail = "Insufficient credits: balance 0.0, this call requires 1.0"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return error_response(402, json_body={"detail": detail})
+
+    with pytest.raises(InsufficientCreditsError) as excinfo:
+        make_client(handler).verify("q")
+    assert excinfo.value.status_code == 402
+    assert excinfo.value.balance == 0.0
+    assert excinfo.value.required == 1.0
+
+
+def test_verify_error_422_maps_to_validation_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return error_response(
+            422,
+            json_body={
+                "detail": [
+                    {
+                        "loc": ["body", "claim"],
+                        "msg": "String should have at most 2000 characters",
+                    }
+                ]
+            },
+        )
+
+    with pytest.raises(ValidationError) as excinfo:
+        make_client(handler).verify("x" * 2001)
+    assert excinfo.value.status_code == 422
+    assert isinstance(excinfo.value, BadRequestError)
+    assert "claim" in str(excinfo.value)
+
+
+def test_async_verify_success():
+    captured: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=verify_body())
+
+    async def scenario() -> VerifyResponse:
+        async with AsyncSearchPipe(
+            api_key="sp-test-key", transport=httpx.MockTransport(handler)
+        ) as client:
+            return await client.verify("async claim", max_evidence=2)
+
+    resp = asyncio.run(scenario())
+    assert isinstance(resp, VerifyResponse)
+    assert resp.verdict == "supported"
+    import json as _json
+
+    payload = _json.loads(captured[0].read().decode("utf-8"))
+    assert payload["claim"] == "async claim"
+    assert payload["max_evidence"] == 2
+    assert captured[0].headers["Authorization"] == "Bearer sp-test-key"
 
 
 # --- configuration -------------------------------------------------------------

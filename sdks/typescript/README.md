@@ -1,6 +1,6 @@
 # SearchPipe TypeScript SDK
 
-Official JavaScript/TypeScript SDK for the SearchPipe web search API.
+Official JavaScript/TypeScript SDK for the SearchPipe web search API — verifiable evidence with every result.
 
 SearchPipe is a web search API and MCP server for developers building AI agents. This SDK is a thin, zero-dependency client on top of the platform `fetch`, covering the full `POST /search` parameter set — ranked results, optional LLM answers with citations, and optional raw page content — for Node.js (>= 18), browsers, and edge runtimes.
 
@@ -59,6 +59,35 @@ main();
 
 `close()` is a no-op kept for symmetry with the Python SDK (the platform `fetch` keeps no client-side connection pool); it is safe to call multiple times.
 
+### Verify a claim
+
+```js
+const verdict = await client.verify({
+  claim: "The transformer paper introduced self-attention in 2017",
+  mode: "auto",       // "paper" / "web" / "auto" (DOI or arXiv signal decides)
+  maxEvidence: 5,     // 1-10
+});
+
+console.log(verdict.verdict);        // supported / partial / unsupported / inconclusive
+console.log(verdict.confidence, verdict.reason_code);
+for (const evidence of verdict.evidences) {
+  console.log(evidence.source_tier, evidence.url);
+  console.log(evidence.quote);       // span-level quote from the source text
+}
+```
+
+`verify()` resolves to a typed `VerifyResponse` (snake_case fields, identical to the REST API and the Python SDK):
+
+| Field | Type | Description |
+|---|---|---|
+| `verdict` | `string` | `supported` / `partial` / `unsupported` / `inconclusive` |
+| `confidence` | `number` | 0-1 |
+| `reason_code` | `string` | Machine-readable template phrase (e.g. `quote_span_found`, `paywall`) |
+| `evidences` | `VerifyEvidence[]` | `url`, `title`, `source_tier`, `quote`, `span_start`/`span_end`, `per_evidence_verdict`, `confidence`, `url_health` |
+| `timing` | `Record<string, number>` | Per-stage wall time in seconds |
+
+`inconclusive` is a first-class outcome (fetch failure, paywall, or insufficient evidence) — the API reports that instead of guessing. Verification fetches source pages, so expect **5–15 seconds** per call; raise `timeoutMs` above the default accordingly. Credits are charged per request; `inconclusive` is a delivered result and is not refunded, while failed calls are refunded automatically.
+
 ## API
 
 ### `client.search(params)`
@@ -84,6 +113,20 @@ Arguments are camelCase and are converted to the server's snake_case request bod
 | `answer` | `string \| null` | LLM-generated answer with citations (when `include_answer=true`) |
 | `results` | `SearchResult[]` | Ranked results: `url`, `title`, `content`, `score`, `raw_content` |
 | `ai_generated` | `boolean` | Whether the response contains LLM-generated content |
+
+### `client.verify(params)`
+
+Arguments are camelCase and are converted to the server's snake_case request body:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `claim` | `string` | — (required) | The factual claim (statement or query) to verify |
+| `mode` | `string` | `"auto"` | Evidence route: `"paper"` / `"web"` / `"auto"` |
+| `evidenceUrls` | `string[]` | — | Up to 5 caller-supplied citations to verify |
+| `maxEvidence` | `number` | server default (5) | Maximum evidence items to return (1-10) |
+| `timeoutMs` | `number` | client default | Per-request timeout override (verification takes 5-15s) |
+
+See the [Verify a claim](#verify-a-claim) section for the response shape.
 
 ## Error handling
 

@@ -22,6 +22,7 @@ import {
   ValidationError,
   type FetchLike,
   type SearchParams,
+  type VerifyParams,
 } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
@@ -70,6 +71,18 @@ async function searchError(
     return error;
   }
   throw new Error("expected search() to reject, but it resolved");
+}
+
+async function verifyError(
+  client: SearchPipe,
+  params: VerifyParams
+): Promise<unknown> {
+  try {
+    await client.verify(params);
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected verify() to reject, but it resolved");
 }
 
 function jsonBody(request: CapturedRequest): Record<string, unknown> {
@@ -140,9 +153,76 @@ test("search maps a full success payload onto the typed response", async () => {
     content: "Run work after the response.",
     score: 0.92,
     raw_content: "full page text",
+    evidence: null,
   });
   assert.equal(response.results[1].raw_content, null);
   assert.equal(response.ai_generated, true);
+  assert.equal(response.answer_audit, null);
+});
+
+test("search maps evidence and answer_audit fields onto typed objects", async () => {
+  const payload = {
+    ...FULL_PAYLOAD,
+    answer_audit: {
+      score: 0.75,
+      uncited_count: 1,
+      prompt_version: "answer-audit-v1-20261015",
+      statements: [
+        {
+          text: "Use BackgroundTasks to run work after the response.",
+          verdict: "supported",
+          confidence: 0.97,
+          citations: [
+            {
+              url: "https://example.com/a",
+              title: "Background Tasks",
+              quote: "Run work after the response.",
+              span_start: 0,
+              span_end: 29,
+            },
+          ],
+        },
+        { text: "Uncited claim.", verdict: "uncited", confidence: 0, citations: [] },
+      ],
+    },
+  };
+  (payload.results[0] as Record<string, unknown>).evidence = {
+    quote: "full page text",
+    span_start: 0,
+    span_end: 14,
+    source_tier: "official",
+    fetch_status: 200,
+    redirected: true,
+    final_url: "https://example.com/a-final",
+    fetched_at: "2026-10-19T00:00:00Z",
+  };
+
+  const { client } = clientWith(jsonResponse(200, payload));
+  const response = await client.search({ query: "fastapi background tasks" });
+
+  const evidence = response.results[0].evidence;
+  assert.ok(evidence);
+  assert.equal(evidence.quote, "full page text");
+  assert.equal(evidence.source_tier, "official");
+  assert.equal(evidence.fetch_status, 200);
+  assert.equal(evidence.redirected, true);
+  assert.equal(evidence.final_url, "https://example.com/a-final");
+  assert.equal(response.results[1].evidence, null);
+
+  const audit = response.answer_audit;
+  assert.ok(audit);
+  assert.equal(audit.score, 0.75);
+  assert.equal(audit.uncited_count, 1);
+  assert.equal(audit.prompt_version, "answer-audit-v1-20261015");
+  assert.equal(audit.statements[0].verdict, "supported");
+  assert.deepEqual(audit.statements[0].citations[0], {
+    url: "https://example.com/a",
+    title: "Background Tasks",
+    quote: "Run work after the response.",
+    span_start: 0,
+    span_end: 29,
+  });
+  assert.equal(audit.statements[1].verdict, "uncited");
 });
 
 test("search tolerates a success payload without answer/ai_generated", async () => {
@@ -362,6 +442,158 @@ test("non-JSON error bodies keep the truncated body and a fallback message", asy
   const serverError = error as SearchPipeServerError;
   assert.match(serverError.message, /without an error detail/);
   assert.equal(serverError.body, "<html>Bad Gateway</html>");
+});
+
+// ---------------------------------------------------------------------------
+// Verify (POST /verify) — claim in, verdict out
+// ---------------------------------------------------------------------------
+
+const FULL_VERIFY_PAYLOAD = {
+  verdict: "supported",
+  confidence: 0.92,
+  reason_code: "quote_span_found",
+  evidences: [
+    {
+      url: "https://example.com/paper",
+      title: "Stub Paper",
+      source_tier: "academic",
+      quote: "supporting sentence",
+      span_start: 0,
+      span_end: 19,
+      per_evidence_verdict: "supported",
+      confidence: 0.9,
+      url_health: {
+        status_code: 200,
+        redirected: false,
+        wayback_snapshot: null,
+        fetched_at: null,
+      },
+    },
+  ],
+  timing: { v_prepare: 0.01, v_evidence: 0.4, v_judge: 0.5 },
+};
+
+test("verify maps a full success payload onto the typed response", async () => {
+  const { client, requests } = clientWith(jsonResponse(200, FULL_VERIFY_PAYLOAD));
+  const response = await client.verify({
+    claim: "the transformer paper introduced self-attention",
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, `${DEFAULT_BASE_URL}/verify`);
+  assert.equal(requests[0].init.method, "POST");
+  assert.equal(headersOf(requests[0])["Authorization"], "Bearer sp-test-key");
+
+  // Response fields keep the server's snake_case naming (deliberately not camelCased).
+  assert.equal(response.verdict, "supported");
+  assert.equal(response.confidence, 0.92);
+  assert.equal(response.reason_code, "quote_span_found");
+  assert.deepEqual(response.timing, { v_prepare: 0.01, v_evidence: 0.4, v_judge: 0.5 });
+  assert.equal(response.evidences.length, 1);
+  assert.deepEqual(response.evidences[0], {
+    url: "https://example.com/paper",
+    title: "Stub Paper",
+    source_tier: "academic",
+    quote: "supporting sentence",
+    span_start: 0,
+    span_end: 19,
+    per_evidence_verdict: "supported",
+    confidence: 0.9,
+    url_health: {
+      status_code: 200,
+      redirected: false,
+      wayback_snapshot: null,
+      fetched_at: null,
+    },
+  });
+});
+
+test("verify converts camelCase params to the snake_case request body", async () => {
+  const { client, requests } = clientWith(jsonResponse(200, FULL_VERIFY_PAYLOAD));
+  await client.verify({
+    claim: "claim",
+    mode: "paper",
+    evidenceUrls: ["https://example.com/a", "https://example.com/b"],
+    maxEvidence: 3,
+  });
+
+  assert.deepEqual(jsonBody(requests[0]), {
+    claim: "claim",
+    mode: "paper",
+    evidence_urls: ["https://example.com/a", "https://example.com/b"],
+    max_evidence: 3,
+  });
+});
+
+test("verify fills the server defaults and omits unset optionals", async () => {
+  const { client, requests } = clientWith(jsonResponse(200, FULL_VERIFY_PAYLOAD));
+  await client.verify({ claim: "claim" });
+
+  // mode defaults to auto; evidence_urls/max_evidence are omitted (server defaults apply).
+  assert.deepEqual(jsonBody(requests[0]), { claim: "claim", mode: "auto" });
+});
+
+test("verify tolerates a minimal success payload", async () => {
+  const { client } = clientWith(jsonResponse(200, { verdict: "inconclusive", reason_code: "paywall" }));
+  const response = await client.verify({ claim: "q" });
+
+  assert.equal(response.verdict, "inconclusive");
+  assert.equal(response.reason_code, "paywall");
+  assert.equal(response.confidence, 0);
+  assert.deepEqual(response.evidences, []);
+  assert.deepEqual(response.timing, {});
+});
+
+test("verify 401 maps to AuthenticationError", async () => {
+  const { client } = clientWith(jsonResponse(401, { detail: "Invalid API key" }));
+  const error = await verifyError(client, { claim: "q" });
+
+  assert.ok(error instanceof AuthenticationError);
+  assert.ok(error instanceof APIStatusError);
+  assert.equal((error as AuthenticationError).status, 401);
+  assert.equal((error as AuthenticationError).message, "Invalid API key");
+});
+
+test("verify 402 maps to InsufficientCreditsError with parsed balance/required", async () => {
+  const { client } = clientWith(
+    jsonResponse(402, {
+      detail: "Insufficient credits: balance 0.0, this call requires 1.0",
+    })
+  );
+  const error = await verifyError(client, { claim: "q" });
+
+  assert.ok(error instanceof InsufficientCreditsError);
+  const credits = error as InsufficientCreditsError;
+  assert.equal(credits.status, 402);
+  assert.equal(credits.balance, 0.0);
+  assert.equal(credits.required, 1.0);
+});
+
+test("verify 422 maps to ValidationError (subclass of BadRequestError)", async () => {
+  const detail = [
+    {
+      type: "string_too_long",
+      loc: ["body", "claim"],
+      msg: "String should have at most 2000 characters",
+    },
+  ];
+  const { client } = clientWith(jsonResponse(422, { detail }));
+  const error = await verifyError(client, { claim: "x".repeat(2001) });
+
+  assert.ok(error instanceof ValidationError);
+  assert.ok(error instanceof BadRequestError);
+  assert.equal((error as ValidationError).status, 422);
+  assert.match((error as ValidationError).message, /claim/);
+});
+
+test("verify 502 maps to SearchPipeServerError (failed verifications are refunded server-side)", async () => {
+  const { client } = clientWith(
+    jsonResponse(502, { detail: "Verification failed: upstream unavailable" })
+  );
+  const error = await verifyError(client, { claim: "q" });
+
+  assert.ok(error instanceof SearchPipeServerError);
+  assert.equal((error as SearchPipeServerError).status, 502);
 });
 
 // ---------------------------------------------------------------------------
