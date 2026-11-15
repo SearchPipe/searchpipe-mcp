@@ -45,6 +45,22 @@ Or use an Authorization header instead of URL parameter:
 
 See [`claude_desktop_config.json.example`](claude_desktop_config.json.example) for a ready-to-copy template.
 
+## MCP Access (Local stdio)
+
+Run the same tools locally over stdio — [`mcp-server/`](mcp-server/) is a thin proxy over the REST API (tool listing works without a key; tool calls use `SEARCHPIPE_API_KEY`):
+
+```bash
+pip install "searchpipe-mcp @ git+https://github.com/SearchPipe/searchpipe-mcp.git#subdirectory=mcp-server"
+SEARCHPIPE_API_KEY=sp-your-key searchpipe-mcp
+```
+
+Or with Docker (from the repository root):
+
+```bash
+docker build -t searchpipe-mcp .
+docker run -i --rm -e SEARCHPIPE_API_KEY=sp-your-key searchpipe-mcp
+```
+
 ## LangChain Integration
 
 ```bash
