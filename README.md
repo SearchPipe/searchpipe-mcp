@@ -2,6 +2,7 @@
 
 [![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-blue)](https://modelcontextprotocol.io/)
 [![SearchPipe](https://img.shields.io/badge/Powered%20by-SearchPipe-green)](https://searchpipe.tech)
+[![Verified on Appside](https://mcp.appside.build/mcp-servers/searchpipe/badge.svg)](https://mcp.appside.build/mcp-servers/searchpipe/)
 
 Official integration packages for [SearchPipe](https://searchpipe.tech) — a web search API and MCP server for developers building AI agents.
 
